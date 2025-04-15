@@ -251,7 +251,9 @@ class fitting(object):
         loss="linear",
         dark_count_mode="min",
         update_mask=True,
-        percentpix = 0.1,
+        percentpix = 0.1, 
+        update_guess=True, 
+        moving_background=False,
     ):
         """Fit a full movie by just using the guesses of the first image
         the guesses for the next image will take the precedent ones.
@@ -266,19 +268,28 @@ class fitting(object):
             n_end = vid.get_length()
             print("length of video = {}".format(self.number))
 
-        image = vid.get_image(1)
+        image = vid.get_image(n_start)
+        if not(moving_background):
+            temp_bg = vid.background
+        else:
+            temp_bg = vid.choose_background(n_start)
         _crop_fit = self._crop_fit
         if dark_count_mode == "min":
             image = normalize(
                 _crop_fit(image),
-                _crop_fit(vid.background),
+                _crop_fit(temp_bg),
                 dark_count=np.min(_crop_fit(image)),
             )
         elif dark_count_mode == "zero":
-            image = normalize(_crop_fit(image), _crop_fit(vid.background), dark_count=0)
+            image = normalize(
+                _crop_fit(image), 
+                _crop_fit(temp_bg), 
+                dark_count=0)
         elif dark_count_mode == "set":
             image = normalize(
-                _crop_fit(image), _crop_fit(vid.background), dark_count=vid.dark_count
+                _crop_fit(image), 
+                _crop_fit(temp_bg), 
+                dark_count=vid.dark_count
             )
 
         image = image / np.mean(image)
@@ -286,28 +297,56 @@ class fitting(object):
             savefile,
             dtype="float64",
             mode="w+",
-            shape=(int(n_end - n_start), len(self.feature.optimizer.variables)),
+            # Here shape modified 
+            # To return variables, their uncertainties, success bit, npix and redchi
+            shape=(int(n_end - n_start), len(self.feature.optimizer.variables) * 2 + 3), #len(self.feature.optimizer.variables)),
         )
-        for n, i in enumerate(tqdm(range(n_start, n_end))):
-            if i > n_start:
-                image = normalize(vid.get_next_image(), vid.background)
-                image = self._crop_fit(image)
-                try:
-                    image = image / np.mean(image)
-                except:
-                    image = image
-
-            if update_mask:
-                self.feature.mask._update()
-                index = self.feature.mask.selected
-                coords = self.feature.coordinates[:, index]
-
-            self.feature.data = image
-            self.result = self.optimize(method=method, loss=loss)
-            self._globalize_result()
-            self.save_result(n)
-            self.update_guess(self.result.z_p)
+        if not(moving_background):
+            temp_bg = vid.background
+            for n, i in enumerate(tqdm(range(n_start, n_end))):
+                if i > n_start:
+                    image = normalize(vid.get_next_image(), temp_bg)
+                    image = self._crop_fit(image)
+                    try:
+                        image = image / np.mean(image)
+                    except:
+                        image = image
+    
+                if update_mask:
+                    self.feature.mask._update()
+                    index = self.feature.mask.selected
+                    coords = self.feature.coordinates[:, index]
+    
+                self.feature.data = image
+                self.result = self.optimize(method=method, loss=loss)
+                self._globalize_result()
+                self.save_result(n)
+                if update_guess:
+                 	self.update_guess(self.result.z_p)
+        else:
+            for n, i in enumerate(tqdm(range(n_start, n_end))):
+                if i > n_start:
+                    temp_bg = vid.choose_background(i+1)
+                    image = normalize(vid.get_next_image(), temp_bg)
+                    image = self._crop_fit(image)
+                    try:
+                        image = image / np.mean(image)
+                    except:
+                        image = image
+    
+                if update_mask:
+                    self.feature.mask._update()
+                    index = self.feature.mask.selected
+                    coords = self.feature.coordinates[:, index]
+    
+                self.feature.data = image
+                self.result = self.optimize(method=method, loss=loss)
+                self._globalize_result()
+                self.save_result(n)
+                if update_guess:
+                 	self.update_guess(self.result.z_p)
         del self.fp
+        del temp_bg
 
     def show_results(self):
         fit = self.fitter.model.hologram().reshape(self.shape)
