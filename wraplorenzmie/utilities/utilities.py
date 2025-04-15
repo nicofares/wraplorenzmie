@@ -63,6 +63,56 @@ class video_reader(object):
         self.background = np.median(buf, axis=0)
         return buf, self.background
 
+    def get_moving_backgrounds(self, n, window):
+        """
+        Compute moving backgrounds, over n images, spread out on window images.
+        """
+        
+        # Define first indexes of the parts for the background computation
+        first_indexes = np.arange(0, self.number, window)
+        # Define the properties of the backgrounds
+        nb_backgrounds = self.number // window + 1
+        imsize = self.get_image(0).shape
+        backgrounds_size = (nb_backgrounds, imsize[0], imsize[1])
+        # Will contain the backgrounds
+        backgrounds = np.empty(backgrounds_size, dtype=np.uint8)
+        
+        for j, index in enumerate(tqdm(first_indexes)):
+            
+            # Define buffer for images, to do median after
+            size = (n+1, imsize[0], imsize[1])
+            # Don't understand why +1 necessary
+            buf = np.empty(size, dtype=np.uint8)
+            # Define images to consider for the background computation
+            start = index
+            stop = min(index+window, self.number) - 1
+            step = window // n
+            get_image = np.arange(start, stop, step)
+            # Get images and update buffer
+            for nn, i in enumerate(get_image):
+                image = self.get_image(i)
+                buf[nn,:,:] = image[:,:] 
+            # Remove the last buffered image, if it is black
+            if np.mean(buf[-1, :, :]) == 0:
+                buf = buf[:-1, :, :]
+            # Median        
+            backgrounds[j,:,:] = np.median(buf, axis=0)
+        # Update self  
+        self.backgrounds = np.copy(backgrounds)
+        self.window = window
+        del backgrounds
+        return self.backgrounds
+    
+    def choose_background(self, i, window=None):
+        """
+        Get the background corresponding to the image i
+
+        """
+        if window==None:
+            window = self.window
+        bg = self.backgrounds[i//window]
+        return bg
+
     def get_length(self):
         """Read the number of frame of vid, can be long with some format as mp4
         so we don't read it again if we already got it"""
